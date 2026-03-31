@@ -2,8 +2,8 @@ import tkinter as tk
 
 from camera import Camera
 from player import Player
-from settings import FPS, HEIGHT, TITLE, WIDTH, WORLD_H, WORLD_W
-from world import draw_floor
+from settings import FPS, HEIGHT, TITLE, WALLS, WIDTH, WORLD_H, WORLD_W
+from world import draw_actor, draw_floor, draw_walls
 
 
 class Game:
@@ -22,7 +22,6 @@ class Game:
 
         self.player = Player(120, 120)
         self.camera = Camera(WIDTH, HEIGHT)
-        self.walls = []
         self.tick()
 
     def _key_down(self, event):
@@ -36,16 +35,13 @@ class Game:
             self.keys[key] = False
 
     def tick(self):
-        self.player.update(self.keys, self.walls, WORLD_W, WORLD_H)
+        self.player.update(self.keys, WALLS, WORLD_W, WORLD_H)
         self.camera.update(self.player, WORLD_W, WORLD_H, 0.14)
 
         self.canvas.delete("all")
         draw_floor(self.canvas, self.camera)
-
-        sx = self.player.x - self.camera.x
-        sy = self.player.y - self.camera.y
-        r = self.player.size
-        self.canvas.create_oval(sx - r, sy - r, sx + r, sy + r, fill=self.player.color, outline="white")
+        draw_walls(self.canvas, self.camera, WALLS)
+        draw_actor(self.canvas, self.camera, self.player, outline="white")
 
         self.root.after(int(1000 / FPS), self.tick)
 
