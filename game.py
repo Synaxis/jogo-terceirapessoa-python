@@ -1,13 +1,21 @@
-import time
+import math
 import tkinter as tk
+from config import *
 
-from camera import Camera
-from hud import draw_hud
-from npc import Npc
-from player import Player
-from settings import CAMERA_SMOOTH, FPS, HEIGHT, TITLE, WALLS, WIDTH, WORLD_H, WORLD_W
-from world import draw_actor, draw_floor, draw_walls
+def hit(x, y, r, wall):
+    wx, wy, ww, wh = wall
+    nx = max(wx, min(x, wx + ww))
+    ny = max(wy, min(y, wy + wh))
+    return (x - nx) ** 2 + (y - ny) ** 2 < r * r
 
+def move(obj, dx, dy):
+    x, y, r = obj["x"] + dx, obj["y"], obj["r"]
+    if r <= x <= WORLD_W - r and not any(hit(x, y, r, w) for w in WALLS):
+        obj["x"] = x
+
+    x, y = obj["x"], obj["y"] + dy
+    if r <= y <= WORLD_H - r and not any(hit(x, y, r, w) for w in WALLS):
+        obj["y"] = y
 
 class Game:
     def __init__(self):
@@ -15,68 +23,93 @@ class Game:
         self.root.title(TITLE)
         self.root.resizable(False, False)
 
-        self.canvas = tk.Canvas(self.root, width=WIDTH, height=HEIGHT, highlightthickness=0)
-        self.canvas.pack()
+        self.cv = tk.Canvas(self.root, width=W, height=H, bg=BG, highlightthickness=0)
+        self.cv.pack()
 
-        self.keys = {k: False for k in "wasd"}
-        self.root.bind("<KeyPress>", self._key_down)
-        self.root.bind("<KeyRelease>", self._key_up)
-        self.root.bind("<Escape>", lambda event: self.root.destroy())
+        self.keys = {k: 0 for k in "wasd"}
+        self.root.bind("<KeyPress>", lambda e: self._set(e, 1))
+        self.root.bind("<KeyRelease>", lambda e: self._set(e, 0))
+        self.root.bind("<Escape>", lambda e: self.root.destroy())
         self.root.bind("r", self.reset)
-
-        self.last_fps_mark = time.perf_counter()
-        self.frames = 0
-        self.fps = 0
 
         self.reset()
         self.tick()
 
-    def reset(self, event=None):
-        self.player = Player(120, 120)
-        self.npcs = [
-            Npc(760, 380),
-            Npc(1410, 540),
-            Npc(1650, 1280),
-            Npc(560, 1460),
+    def _set(self, event, value):
+        key = event.keysym.lower()
+        if key in self.keys:
+            self.keys[key] = value
+
+    def reset(self, _=None):
+        self.p = {"x": 120, "y": 120, "r": PLAYER_R, "a": 0.0, "c": PLAYER}
+        self.enemies = [
+            {"x": 760, "y": 380, "r": ENEMY_R, "a": 0.0, "c": ENEMY},
+            {"x": 1410, "y": 540, "r": ENEMY_R, "a": 0.0, "c": ENEMY},
+            {"x": 560, "y": 980, "r": ENEMY_R, "a": 0.0, "c": ENEMY},
         ]
-        self.camera = Camera(WIDTH, HEIGHT)
 
-    def _key_down(self, event):
-        key = event.keysym.lower()
-        if key in self.keys:
-            self.keys[key] = True
+    def cam(self):
+        x = max(0, min(WORLD_W - W, self.p["x"] - W / 2))
+        y = max(0, min(WORLD_H - H, self.p["y"] - H / 2 + 80))
+        return x, y
 
-    def _key_up(self, event):
-        key = event.keysym.lower()
-        if key in self.keys:
-            self.keys[key] = False
+    def update_player(self):
+        dx = self.keys["d"] - self.keys["a"]
+        dy = self.keys["s"] - self.keys["w"]
+        if dx or dy:
+            n = math.hypot(dx, dy)
+            dx = dx / n * PLAYER_SPEED
+            dy = dy / n * PLAYER_SPEED
+            self.p["a"] = math.atan2(dy, dx)
+            move(self.p, dx, dy)
 
-    def _update_fps(self):
-        self.frames += 1
-        now = time.perf_counter()
-        if now - self.last_fps_mark >= 1:
-            self.fps = self.frames
-            self.frames = 0
-            self.last_fps_mark = now
+    def update_enemy(self, enemy):
+        vx = self.p["x"] - enemy["x"]
+        vy = self.p["y"] - enemy["y"]
+        d = math.hypot(vx, vy)
+        if d > 1:
+            dx = vx / d * ENEMY_SPEED
+            dy = vy / d * ENEMY_SPEED
+            enemy["a"] = math.atan2(dy, dx)
+            move(enemy, dx, dy)
+
+    def draw_actor(self, actor, camx, camy, outline=""):
+        x = actor["x"] - camx
+        y = actor["y"] - camy
+        r = actor["r"]
+
+        self.cv.create_oval(x - r + 4, y - r + 8, x + r + 4, y + r + 8, fill=SHADOW, outline="")
+        self.cv.create_oval(x - r, y - r, x + r, y + r, fill=actor["c"], outline=outline)
+
+        fx = x + math.cos(actor["a"]) * r * 1.2
+        fy = y + math.sin(actor["a"]) * r * 1.2
+        self.cv.create_line(x, y, fx, fy, width=3)
+
+    def draw(self):
+        camx, camy = self.cam()
+        self.cv.delete("all")
+        self.cv.create_rectangle(0, 0, W, H, fill=FLOOR, outline="")
+
+        sx, sy = -int(camx) % 60, -int(camy) % 60
+        for x in range(sx, W + 60, 60):
+            self.cv.create_line(x, 0, x, H, fill=GRID)
+        for y in range(sy, H + 60, 60):
+            self.cv.create_line(0, y, W, y, fill=GRID)
+
+        for x, y, w, h in WALLS:
+            self.cv.create_rectangle(x - camx, y - camy, x - camx + w, y - camy + h, fill=WALL, outline="")
+
+        for actor in sorted([*self.enemies, self.p], key=lambda a: a["y"]):
+            self.draw_actor(actor, camx, camy, "white" if actor is self.p else "")
+
+        self.cv.create_text(14, 14, text="WASD move   R reset   ESC exit", fill=HUD, anchor="nw", font=("Arial", 12, "bold"))
 
     def tick(self):
-        self.player.update(self.keys, WALLS, WORLD_W, WORLD_H)
-        for npc in self.npcs:
-            npc.update(self.player, WALLS, WORLD_W, WORLD_H)
-        self.camera.update(self.player, WORLD_W, WORLD_H, CAMERA_SMOOTH)
-
-        self.canvas.delete("all")
-        draw_floor(self.canvas, self.camera)
-        draw_walls(self.canvas, self.camera, WALLS)
-
-        actors = sorted([*self.npcs, self.player], key=lambda actor: actor.y)
-        for actor in actors:
-            outline = "white" if actor is self.player else ""
-            draw_actor(self.canvas, self.camera, actor, outline=outline)
-
-        self._update_fps()
-        draw_hud(self.canvas, self.fps, len(self.npcs))
-        self.root.after(int(1000 / FPS), self.tick)
+        self.update_player()
+        for enemy in self.enemies:
+            self.update_enemy(enemy)
+        self.draw()
+        self.root.after(1000 // FPS, self.tick)
 
     def run(self):
         self.root.mainloop()
